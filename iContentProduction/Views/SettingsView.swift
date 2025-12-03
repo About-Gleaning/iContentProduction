@@ -33,6 +33,19 @@ struct SettingsView: View {
                     }
                 }
             }
+            
+            Section(header: Text("内容配置")) {
+                HStack {
+                    Text("最大内容字数限制")
+                    Spacer()
+                    TextField("15000", value: $settings.maxContentLength, formatter: NumberFormatter())
+                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                        .frame(width: 100)
+                }
+                Text("当多个链接的内容总字数超过此限制时，将无法进行下一步。")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
         }
         .padding()
         .frame(width: 500, height: 300)
