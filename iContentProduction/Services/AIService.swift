@@ -1,0 +1,268 @@
+//
+//  AIService.swift
+//  iContentProduction
+//
+//  Created by AI Assistant on 2025/12/02.
+//
+
+import Foundation
+
+class AIService {
+    static let shared = AIService()
+    
+    private let baseUrl = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+    
+    // 自定义URLSession，超时时间设置为10分钟
+    private lazy var urlSession: URLSession = {
+        let configuration = URLSessionConfiguration.default
+        configuration.timeoutIntervalForRequest = 600 // 10分钟
+        configuration.timeoutIntervalForResource = 600 // 10分钟
+        return URLSession(configuration: configuration)
+    }()
+    
+    private init() {}
+    
+    private var apiKey: String {
+        SettingsService.shared.apiKey
+    }
+    
+    struct ChatMessage: Codable {
+        let role: String
+        let content: String
+    }
+    
+    struct ChatRequest: Codable {
+        let model: String
+        let messages: [ChatMessage]
+        let temperature: Double?
+    }
+    
+    struct ChatResponse: Codable {
+        struct Choice: Codable {
+            struct Message: Codable {
+                let content: String
+            }
+            let message: Message
+        }
+        let choices: [Choice]
+    }
+    
+    private func performRequest(messages: [ChatMessage]) async throws -> String {
+        guard !apiKey.isEmpty else {
+            throw NSError(domain: "AIService", code: 401, userInfo: [NSLocalizedDescriptionKey: "API Key 缺失"])
+        }
+        
+        guard let url = URL(string: baseUrl) else {
+            throw URLError(.badURL)
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        let requestBody = ChatRequest(model: "qwen-plus", messages: messages, temperature: 0.7)
+        let jsonData = try JSONEncoder().encode(requestBody)
+        request.httpBody = jsonData
+        
+        // Debug: Log Request
+        print("--- AIService Request ---")
+        if let jsonString = String(data: jsonData, encoding: .utf8) {
+            print("Request Body: \(jsonString)")
+        }
+        
+        let (data, response) = try await urlSession.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
+            if let errorString = String(data: data, encoding: .utf8) {
+                print("--- AIService Error ---")
+                print("Status: \((response as? HTTPURLResponse)?.statusCode ?? 0)")
+                print("Response: \(errorString)")
+            }
+            throw URLError(.badServerResponse)
+        }
+        
+        // Debug: Log Response
+        if let responseString = String(data: data, encoding: .utf8) {
+            print("--- AIService Response ---")
+            print("Response: \(responseString)")
+        }
+        
+        let chatResponse = try JSONDecoder().decode(ChatResponse.self, from: data)
+        return chatResponse.choices.first?.message.content ?? ""
+    }
+    
+    // MARK: - Public Methods
+    
+    func generateChapters(from content: String, type: ContentType, duration: Int, wordCount: Int) async throws -> [Chapter] {
+        var prompt = ""
+        
+        switch type {
+        case .videoScript:
+            prompt = """
+            根据以下内容，为时长约\(duration)分钟的视频脚本生成章节列表。
+            请根据\(duration)分钟的时长合理规划章节数量和每个章节的内容量。
+            以严格的JSON数组格式返回结果，每个对象包含 'title'、'summary' 和 'keyPoints'（字符串数组）字段。
+            不要包含任何markdown格式或额外文本。
+            
+            内容：
+            \(content.prefix(10000))
+            """
+        case .xiaohongshu:
+            prompt = """
+            根据以下内容，为约\(wordCount)字的小红书内容生成章节列表。
+            请根据\(wordCount)字的篇幅合理规划章节数量和每个章节的内容量。
+            小红书内容应该简洁、有吸引力，适合社交媒体阅读。
+            以严格的JSON数组格式返回结果，每个对象包含 'title'、'summary' 和 'keyPoints'（字符串数组）字段。
+            不要包含任何markdown格式或额外文本。
+            
+            内容：
+            \(content.prefix(10000))
+            """
+        case .socialPost:
+            prompt = """
+            根据以下内容，为社交媒体帖子生成章节列表。
+            以严格的JSON数组格式返回结果，每个对象包含 'title'、'summary' 和 'keyPoints'（字符串数组）字段。
+            不要包含任何markdown格式或额外文本。
+            
+            内容：
+            \(content.prefix(10000))
+            """
+        }
+        
+        let messages = [
+            ChatMessage(role: "system", content: "你是一位专业的自媒体内容创作者。"),
+            ChatMessage(role: "user", content: prompt)
+        ]
+        
+        let responseText = try await performRequest(messages: messages)
+        
+        // Clean up response if it contains markdown code blocks
+        var cleanJson = responseText.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        // 移除markdown代码块标记
+        // 处理 ```json ... ``` 或 ``` ... ``` 格式
+        if cleanJson.hasPrefix("```") {
+            // 移除开头的 ```json 或 ```
+            if cleanJson.hasPrefix("```json") {
+                cleanJson = String(cleanJson.dropFirst(7))
+            } else if cleanJson.hasPrefix("```") {
+                cleanJson = String(cleanJson.dropFirst(3))
+            }
+            cleanJson = cleanJson.trimmingCharacters(in: .whitespacesAndNewlines)
+            
+            // 移除结尾的 ```
+            if cleanJson.hasSuffix("```") {
+                cleanJson = String(cleanJson.dropLast(3))
+            }
+            cleanJson = cleanJson.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        
+        guard let data = cleanJson.data(using: .utf8) else { return [] }
+        
+        do {
+            return try JSONDecoder().decode([Chapter].self, from: data)
+        } catch {
+            print("解析章节失败: \(error)")
+            print("清理后的JSON: \(cleanJson)")
+            // Fallback: try to parse manually or return empty if strict JSON failed
+            return []
+        }
+    }
+    
+    func generateContent(from content: String, type: ContentType, chapters: [Chapter], duration: Int, wordCount: Int) async throws -> String {
+        let chaptersJson = try? JSONEncoder().encode(chapters)
+        let chaptersString = String(data: chaptersJson ?? Data(), encoding: .utf8) ?? ""
+        
+        var prompt = ""
+        var systemMessage = ""
+        
+        switch type {
+        case .videoScript:
+            systemMessage = "你是一位专业的视频脚本撰写者。"
+            prompt = """
+            根据原始内容和以下章节大纲，为时长约\(duration)分钟的视频脚本编写完整的内容正文。
+            
+            重要要求：
+            1. 视频时长为\(duration)分钟，请合理控制内容的节奏和长度
+            2. 内容应该适合口语化表达，便于视频演讲
+            3. 每个章节的内容量应该与\(duration)分钟的总时长相匹配
+            4. 包含适当的过渡和引导语句
+            
+            原始内容：
+            \(content.prefix(5000))
+            
+            章节：
+            \(chaptersString)
+            
+            请清晰专业地编写视频脚本内容。
+            """
+        case .xiaohongshu:
+            systemMessage = "你是一位专业的小红书内容创作者。"
+            prompt = """
+            根据原始内容和以下章节大纲，编写约\(wordCount)字的小红书内容。
+            
+            重要要求：
+            1. 总字数控制在\(wordCount)字左右（可以有10%的浮动）
+            2. 内容要简洁、有吸引力，适合社交媒体阅读
+            3. 使用emoji表情增加趣味性
+            4. 开头要有吸引力，能够抓住读者注意力
+            5. 适当使用分段，提高可读性
+            6. 可以包含话题标签
+            
+            原始内容：
+            \(content.prefix(5000))
+            
+            章节：
+            \(chaptersString)
+            
+            请编写吸引人的小红书内容。
+            """
+        case .socialPost:
+            systemMessage = "你是一位专业的社交媒体内容创作者。"
+            prompt = """
+            根据原始内容和以下章节大纲，编写社交媒体帖子内容。
+            
+            原始内容：
+            \(content.prefix(5000))
+            
+            章节：
+            \(chaptersString)
+            
+            请清晰专业地编写内容。
+            """
+        }
+        
+        let messages = [
+            ChatMessage(role: "system", content: systemMessage),
+            ChatMessage(role: "user", content: prompt)
+        ]
+        
+        return try await performRequest(messages: messages)
+    }
+    
+    func refineContent(original: String, instruction: String) async throws -> String {
+        let prompt = """
+        根据以下指令优化内容：“\(instruction)”
+        
+        内容：
+        \(original)
+        """
+        
+        let messages = [
+            ChatMessage(role: "system", content: "你是一位专业的编辑。"),
+            ChatMessage(role: "user", content: prompt)
+        ]
+        
+        return try await performRequest(messages: messages)
+    }
+    
+    func chat(context: String, query: String) async throws -> String {
+        let messages = [
+            ChatMessage(role: "system", content: "你是一个乐于助人的助手。根据提供的上下文回答用户的问题。\n\n上下文：\n\(context.prefix(10000))"),
+            ChatMessage(role: "user", content: query)
+        ]
+        
+        return try await performRequest(messages: messages)
+    }
+}
