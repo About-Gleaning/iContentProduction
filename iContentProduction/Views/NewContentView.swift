@@ -41,6 +41,7 @@ struct LinkItem: Identifiable, Equatable {
     var url: String
     var status: LinkStatus = .pending
     var content: String = ""
+    var isDirectInput: Bool = false // 标记是否为直接输入内容
     
 
 }
@@ -54,6 +55,7 @@ struct NewContentView: View {
     @State private var selectedType: ContentType = .videoScript
     @State private var duration: Int = 12
     @State private var length: Int = 500
+    @State private var podcastPeopleCount: Int = 2
     @State private var isProcessing = false
     @State private var errorMessage: String?
     
@@ -68,13 +70,13 @@ struct NewContentView: View {
             // Step Views
             Group {
                 if currentStep == 1 {
-                    Step1InputView(linkItems: $linkItems)
+                    Step1InputView(linkItems: $linkItems, onFetchLink: fetchLinkContent)
                 } else if currentStep == 2 {
-                    Step2ConfigView(selectedType: $selectedType, duration: $duration, length: $length)
+                    Step2ConfigView(selectedType: $selectedType, duration: $duration, length: $length, podcastPeopleCount: $podcastPeopleCount)
                 } else if currentStep == 3 {
                     Step3ChaptersView(chapters: $chapters)
                 } else if currentStep == 4 {
-                    Step4ContentView(contentBody: $contentBody, refinementInstruction: $refinementInstruction, onRefine: refineContent)
+                    Step4ContentView(contentBody: $contentBody, refinementInstruction: $refinementInstruction, selectedType: selectedType, onRefine: refineContent)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -106,7 +108,7 @@ struct NewContentView: View {
                 
                 if currentStep == 1 {
                     Button("下一步") {
-                        fetchContent()
+                        proceedToStep2()
                     }
                     .disabled(!hasValidLinks() || isProcessing)
                 } else if currentStep == 2 {
@@ -134,105 +136,99 @@ struct NewContentView: View {
     // MARK: - Helper Methods
     
     private func hasValidLinks() -> Bool {
-        return linkItems.contains { !$0.url.trimmingCharacters(in: .whitespaces).isEmpty }
+        // Check if there's at least one valid item:
+        // - Direct input with content, OR
+        // - URL-based item with non-empty URL
+        return linkItems.contains { item in
+            if item.isDirectInput {
+                return !item.content.trimmingCharacters(in: .whitespaces).isEmpty
+            } else {
+                return !item.url.trimmingCharacters(in: .whitespaces).isEmpty
+            }
+        }
     }
     
     // MARK: - Actions
     
-    private func fetchContent() {
-        let validLinks = linkItems.filter { !$0.url.trimmingCharacters(in: .whitespaces).isEmpty }
-        guard !validLinks.isEmpty else { return }
+    private func fetchLinkContent(id: UUID) {
+        guard let index = linkItems.firstIndex(where: { $0.id == id }) else { return }
+        let url = linkItems[index].url
+        guard !url.trimmingCharacters(in: .whitespaces).isEmpty else { return }
         
-        isProcessing = true
-        errorMessage = nil
+        // Update status to fetching
+        linkItems[index].status = .fetching
+        // We do not set global isProcessing here to allow user to fetch multiple links or do other things
         
         Task {
-            // 并行获取所有链接的内容
-            await withTaskGroup(of: (UUID, String?, String?).self) { group in
-                for link in validLinks {
-                    // 如果已经获取成功且有内容，跳过重新获取（保留用户编辑的内容）
-                    if link.status == .success && !link.content.isEmpty {
-                        continue
-                    }
-                    
-                    group.addTask {
-                        // 更新状态为获取中
-                        await MainActor.run {
-                            if let index = linkItems.firstIndex(where: { $0.id == link.id }) {
-                                linkItems[index].status = .fetching
-                            }
-                        }
-                        
-                        do {
-                            let content = try await ContentFetcher.shared.fetchContent(from: link.url)
-                            return (link.id, content, nil)
-                        } catch {
-                            return (link.id, nil, error.localizedDescription)
-                        }
+            do {
+                let content = try await ContentFetcher.shared.fetchContent(from: url)
+                await MainActor.run {
+                    if let index = linkItems.firstIndex(where: { $0.id == id }) {
+                        linkItems[index].content = content
+                        linkItems[index].status = .success
                     }
                 }
-                
-                // 收集结果
-                for await (linkId, content, error) in group {
-                    await MainActor.run {
-                        if let index = linkItems.firstIndex(where: { $0.id == linkId }) {
-                            if let content = content {
-                                linkItems[index].content = content
-                                linkItems[index].status = .success
-                            } else if let error = error {
-                                linkItems[index].status = .failed(error)
-                            }
-                        }
+            } catch {
+                await MainActor.run {
+                    if let index = linkItems.firstIndex(where: { $0.id == id }) {
+                        linkItems[index].status = .failed(error.localizedDescription)
                     }
                 }
-            }
-            
-            await MainActor.run {
-                // 合并所有成功获取的内容
-                let successfulLinks = linkItems.filter {
-                    if case .success = $0.status { return true }
-                    return false
-                }
-                
-                if successfulLinks.isEmpty {
-                    isProcessing = false
-                    errorMessage = "所有链接获取失败，请检查链接是否正确"
-                    return
-                }
-                
-                // 构建综合内容，明确标注多来源
-                var combinedContent = ""
-                if successfulLinks.count > 1 {
-                    combinedContent = "【注意：以下内容来自\(successfulLinks.count)个不同来源，请综合分析所有来源的内容】\n\n"
-                }
-                
-                for (index, link) in successfulLinks.enumerated() {
-                    combinedContent += "=== 来源 \(index + 1): \(link.url) ===\n\n"
-                    combinedContent += link.content
-                    combinedContent += "\n\n"
-                }
-                
-                fetchedContent = combinedContent
-                isProcessing = false
-                
-                // 如果有部分失败，显示警告
-                let failedCount = linkItems.count - successfulLinks.count
-                if failedCount > 0 {
-                    errorMessage = "警告：\(failedCount)个链接获取失败，已使用\(successfulLinks.count)个成功的链接继续"
-                }
-                
-                // Check for content length limit
-                let totalLength = combinedContent.count
-                let limit = SettingsService.shared.maxContentLength
-                
-                if totalLength > limit {
-                    errorMessage = "当前内容总字数为 \(totalLength) 个字符，超过了 \(limit) 个字符的限制，请修改。"
-                    return
-                }
-
-                withAnimation { currentStep = 2 }
             }
         }
+    }
+
+    private func proceedToStep2() {
+        // Collect all valid items (both direct input and URL-based)
+        let validItems = linkItems.filter { item in
+            if item.isDirectInput {
+                return !item.content.trimmingCharacters(in: .whitespaces).isEmpty
+            } else {
+                return !item.url.trimmingCharacters(in: .whitespaces).isEmpty
+            }
+        }
+        
+        guard !validItems.isEmpty else { return }
+        
+        // Check if all URL-based items have successfully fetched content
+        let urlBasedItems = validItems.filter { !$0.isDirectInput }
+        let pendingLinks = urlBasedItems.filter { $0.status != .success || $0.content.isEmpty }
+        if !pendingLinks.isEmpty {
+            errorMessage = "请先点击获取内容按钮，确保所有链接都已成功获取内容"
+            return
+        }
+        
+        errorMessage = nil
+        
+        // 构建综合内容
+        var combinedContent = ""
+        let itemsWithContent = validItems.filter { !$0.content.isEmpty }
+        if itemsWithContent.count > 1 {
+            combinedContent = "【注意：以下内容来自\(itemsWithContent.count)个不同来源，请综合分析所有来源的内容】\n\n"
+        }
+        
+        for (index, item) in itemsWithContent.enumerated() {
+            if item.isDirectInput {
+                combinedContent += "=== 来源 \(index + 1): 直接输入 ===\n\n"
+            } else {
+                combinedContent += "=== 来源 \(index + 1): \(item.url) ===\n\n"
+            }
+            combinedContent += item.content
+            combinedContent += "\n\n"
+        }
+        
+        fetchedContent = combinedContent
+        
+        // Check for content length limit
+        let totalLength = combinedContent.count
+        let limit = SettingsService.shared.maxContentLength
+        
+        if totalLength > limit {
+            errorMessage = "当前内容总字数为 \(totalLength) 个字符，超过了 \(limit) 个字符的限制，请修改。"
+            return
+        }
+
+        withAnimation { currentStep = 2 }
     }
     
     private func generateChapters() {
@@ -245,7 +241,8 @@ struct NewContentView: View {
                     from: fetchedContent, 
                     type: selectedType,
                     duration: duration,
-                    wordCount: length
+                    wordCount: length,
+                    peopleCount: podcastPeopleCount
                 )
                 
                 await MainActor.run {
@@ -276,7 +273,8 @@ struct NewContentView: View {
                     type: selectedType, 
                     chapters: chapters,
                     duration: duration,
-                    wordCount: length
+                    wordCount: length,
+                    peopleCount: podcastPeopleCount
                 )
                 
                 await MainActor.run {
@@ -320,7 +318,10 @@ struct NewContentView: View {
             urls: urls,
             contentType: selectedType,
             chapters: chapters,
-            contentBody: contentBody
+            contentBody: contentBody,
+            duration: duration,
+            wordCount: length,
+            peopleCount: podcastPeopleCount
         )
         modelContext.insert(newItem)
         dismiss()
@@ -331,6 +332,7 @@ struct NewContentView: View {
 
 struct Step1InputView: View {
     @Binding var linkItems: [LinkItem]
+    var onFetchLink: (UUID) -> Void
     
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -357,6 +359,9 @@ struct Step1InputView: View {
                                     let id = $item.wrappedValue.id
                                     linkItems.removeAll(where: { $0.id == id })
                                 }
+                            },
+                            onFetch: {
+                                onFetchLink($item.wrappedValue.id)
                             }
                         )
                     }
@@ -366,20 +371,36 @@ struct Step1InputView: View {
 
 
             
-            // 添加链接按钮
-            Button(action: {
-                withAnimation {
-                    linkItems.append(LinkItem(url: ""))
+            // 添加链接和添加内容按钮
+            HStack(spacing: 16) {
+                Button(action: {
+                    withAnimation {
+                        linkItems.append(LinkItem(url: "", isDirectInput: false))
+                    }
+                }) {
+                    HStack {
+                        Image(systemName: "plus.circle.fill")
+                        Text("添加链接")
+                    }
+                    .font(.body)
+                    .foregroundColor(.blue)
                 }
-            }) {
-                HStack {
-                    Image(systemName: "plus.circle.fill")
-                    Text("添加链接")
+                .buttonStyle(PlainButtonStyle())
+                
+                Button(action: {
+                    withAnimation {
+                        linkItems.append(LinkItem(url: "", status: .success, content: "", isDirectInput: true))
+                    }
+                }) {
+                    HStack {
+                        Image(systemName: "doc.text.fill")
+                        Text("添加内容")
+                    }
+                    .font(.body)
+                    .foregroundColor(.green)
                 }
-                .font(.body)
-                .foregroundColor(.blue)
+                .buttonStyle(PlainButtonStyle())
             }
-            .buttonStyle(PlainButtonStyle())
             
             Spacer()
             
@@ -415,6 +436,7 @@ struct Step2ConfigView: View {
     @Binding var selectedType: ContentType
     @Binding var duration: Int
     @Binding var length: Int
+    @Binding var podcastPeopleCount: Int
     
     var body: some View {
         VStack(alignment: .leading, spacing: 30) {
@@ -426,6 +448,7 @@ struct Step2ConfigView: View {
                 Picker("类型", selection: $selectedType) {
                     Text("视频脚本").tag(ContentType.videoScript)
                     Text("小红书内容").tag(ContentType.xiaohongshu)
+                    Text("音频播客").tag(ContentType.audioPodcast)
                 }
                 .pickerStyle(RadioGroupPickerStyle())
             }
@@ -458,6 +481,31 @@ struct Step2ConfigView: View {
                 }
             }
             
+            // 音频播客显示时长和人数
+            if selectedType == .audioPodcast {
+                HStack {
+                    Text("时长：")
+                        .font(.headline)
+                        .frame(width: 80, alignment: .leading)
+                    
+                    TextField("30", value: $duration, formatter: NumberFormatter())
+                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                        .frame(width: 60)
+                    Text("分钟")
+                }
+                
+                HStack {
+                    Text("人数：")
+                        .font(.headline)
+                        .frame(width: 80, alignment: .leading)
+                    
+                    TextField("2", value: $podcastPeopleCount, formatter: NumberFormatter())
+                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                        .frame(width: 60)
+                    Text("人")
+                }
+            }
+            
             Spacer()
         }
         .padding()
@@ -484,7 +532,7 @@ struct Step3ChaptersView: View {
                     ChapterRow(chapter: $chapter, onDelete: {
                         if let index = chapters.firstIndex(where: { $0.id == chapter.id }) {
                             withAnimation {
-                                chapters.remove(at: index)
+                                _ = chapters.remove(at: index)
                             }
                         }
                     })
@@ -546,11 +594,12 @@ struct ChapterRow: View {
 struct Step4ContentView: View {
     @Binding var contentBody: String
     @Binding var refinementInstruction: String
+    var selectedType: ContentType
     var onRefine: () -> Void
     
     var body: some View {
         VStack(alignment: .leading) {
-            Text("演讲内容")
+            Text(selectedType == .audioPodcast ? "逐字稿" : "演讲内容")
                 .font(.title2)
                 .bold()
             
@@ -586,59 +635,101 @@ struct LinkItemRow: View {
     @Binding var item: LinkItem
     let canDelete: Bool
     let onDelete: () -> Void
+    let onFetch: () -> Void
     
     @State private var isEditing = false
     
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 12) {
-                // 状态图标
-                Image(systemName: item.status.icon)
-                    .foregroundColor(item.status.color)
-                    .frame(width: 20)
-                    .rotationEffect(.degrees(item.status == .fetching ? 360 : 0))
-                    .animation(item.status == .fetching ? Animation.linear(duration: 1).repeatForever(autoreverses: false) : .default, value: item.status == .fetching)
-                
-                // 链接输入框
-                TextField("请输入链接地址", text: $item.url)
-                    .textFieldStyle(RoundedBorderTextFieldStyle())
-                    .disabled(item.status == .fetching)
-                    .onChange(of: item.url) { _ in
-                        item.status = .pending
-                        item.content = ""
+            if item.isDirectInput {
+                // 直接内容输入模式
+                HStack(spacing: 12) {
+                    // 内容图标
+                    Image(systemName: "doc.text.fill")
+                        .foregroundColor(.green)
+                        .frame(width: 20)
+                    
+                    // 内容输入框
+                    TextEditor(text: $item.content)
+                        .frame(minHeight: 80, maxHeight: 200)
+                        .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.gray.opacity(0.3), lineWidth: 1))
+                        .overlay(
+                            Group {
+                                if item.content.isEmpty {
+                                    Text("请输入内容...")
+                                        .foregroundColor(.gray.opacity(0.5))
+                                        .padding(.top, 8)
+                                        .padding(.leading, 5)
+                                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                                        .allowsHitTesting(false)
+                                }
+                            }
+                        )
+                    
+                    // 删除按钮
+                    if canDelete {
+                        Button(action: onDelete) {
+                            Image(systemName: "minus.circle.fill")
+                                .foregroundColor(.red)
+                                .font(.title3)
+                        }
+                        .buttonStyle(PlainButtonStyle())
                     }
-                
-                // 编辑按钮
-                if !item.content.isEmpty {
-                    Button(action: { isEditing = true }) {
-                        Image(systemName: "square.and.pencil")
-                            .foregroundColor(.blue)
-                            .font(.title3)
+                }
+            } else {
+                // 链接输入模式
+                HStack(spacing: 12) {
+                    // 状态图标
+                    Image(systemName: item.status.icon)
+                        .foregroundColor(item.status.color)
+                        .frame(width: 20)
+                        .rotationEffect(.degrees(item.status == .fetching ? 360 : 0))
+                        .animation(item.status == .fetching ? Animation.linear(duration: 1).repeatForever(autoreverses: false) : .default, value: item.status == .fetching)
+                    
+                    // 链接输入框
+                    TextField("请输入链接地址", text: $item.url)
+                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                        .disabled(item.status == .fetching)
+                        .onChange(of: item.url) { _, _ in
+                            item.status = .pending
+                            item.content = ""
+                        }
+                    
+                    // 获取内容/编辑按钮
+                    if item.status == .success && !item.content.isEmpty {
+                        Button(action: { isEditing = true }) {
+                            Text("编辑")
+                        }
+                        .buttonStyle(.bordered)
+                        .sheet(isPresented: $isEditing) {
+                            ContentEditorView(content: $item.content, isPresented: $isEditing)
+                        }
+                    } else {
+                        Button(action: onFetch) {
+                            Text("获取内容")
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(item.url.trimmingCharacters(in: .whitespaces).isEmpty || item.status == .fetching)
                     }
-                    .buttonStyle(PlainButtonStyle())
-                    .sheet(isPresented: $isEditing) {
-                        ContentEditorView(content: $item.content, isPresented: $isEditing)
+                    
+                    // 删除按钮
+                    if canDelete {
+                        Button(action: onDelete) {
+                            Image(systemName: "minus.circle.fill")
+                                .foregroundColor(.red)
+                                .font(.title3)
+                        }
+                        .buttonStyle(PlainButtonStyle())
                     }
-                    .help("查看并编辑内容")
                 }
                 
-                // 删除按钮
-                if canDelete {
-                    Button(action: onDelete) {
-                        Image(systemName: "minus.circle.fill")
-                            .foregroundColor(.red)
-                            .font(.title3)
-                    }
-                    .buttonStyle(PlainButtonStyle())
+                // 错误信息
+                if case .failed(let error) = item.status {
+                    Text("错误: \(error)")
+                        .font(.caption)
+                        .foregroundColor(.red)
+                        .padding(.leading, 32)
                 }
-            }
-            
-            // 错误信息
-            if case .failed(let error) = item.status {
-                Text("错误: \(error)")
-                    .font(.caption)
-                    .foregroundColor(.red)
-                    .padding(.leading, 32)
             }
         }
     }

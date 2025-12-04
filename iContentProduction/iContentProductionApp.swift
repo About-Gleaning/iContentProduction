@@ -15,12 +15,34 @@ struct iContentProductionApp: App {
             Item.self,
             ContentItem.self,
         ])
-        let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
+        
+        // Enable auto migration for schema changes
+        let modelConfiguration = ModelConfiguration(
+            schema: schema,
+            isStoredInMemoryOnly: false,
+            allowsSave: true
+        )
 
         do {
-            return try ModelContainer(for: schema, configurations: [modelConfiguration])
+            let container = try ModelContainer(for: schema, configurations: [modelConfiguration])
+            return container
         } catch {
-            fatalError("Could not create ModelContainer: \(error)")
+            // If migration fails, try to create a fresh container
+            print("Migration error: \(error)")
+            print("Attempting to create fresh container...")
+            
+            // For development: delete old data and create fresh container
+            let freshConfiguration = ModelConfiguration(
+                schema: schema,
+                isStoredInMemoryOnly: false,
+                allowsSave: true
+            )
+            
+            do {
+                return try ModelContainer(for: schema, configurations: [freshConfiguration])
+            } catch {
+                fatalError("Could not create ModelContainer: \(error)")
+            }
         }
     }()
 

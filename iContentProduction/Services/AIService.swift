@@ -98,7 +98,7 @@ class AIService {
     
     // MARK: - Public Methods
     
-    func generateChapters(from content: String, type: ContentType, duration: Int, wordCount: Int) async throws -> [Chapter] {
+    func generateChapters(from content: String, type: ContentType, duration: Int, wordCount: Int, peopleCount: Int = 2) async throws -> [Chapter] {
         var prompt = ""
         
         // 检测是否为多来源内容
@@ -130,6 +130,16 @@ class AIService {
         case .socialPost:
             prompt = """
             根据以下内容，为社交媒体帖子生成章节列表。\(sourceInstruction)
+            以严格的JSON数组格式返回结果，每个对象包含 'title'、'summary' 和 'keyPoints'（字符串数组）字段。
+            不要包含任何markdown格式或额外文本。
+            
+            内容：
+            \(content.prefix(maxContentLength))
+            """
+        case .audioPodcast:
+            prompt = """
+            根据以下内容，为时长约\(duration)分钟、\(peopleCount)人参与的音频播客生成章节大纲。
+            请根据\(duration)分钟的时长合理规划话题和讨论流程。\(sourceInstruction)
             以严格的JSON数组格式返回结果，每个对象包含 'title'、'summary' 和 'keyPoints'（字符串数组）字段。
             不要包含任何markdown格式或额外文本。
             
@@ -178,7 +188,7 @@ class AIService {
         }
     }
     
-    func generateContent(from content: String, type: ContentType, chapters: [Chapter], duration: Int, wordCount: Int) async throws -> String {
+    func generateContent(from content: String, type: ContentType, chapters: [Chapter], duration: Int, wordCount: Int, peopleCount: Int = 2) async throws -> String {
         let chaptersJson = try? JSONEncoder().encode(chapters)
         let chaptersString = String(data: chaptersJson ?? Data(), encoding: .utf8) ?? ""
         
@@ -245,6 +255,27 @@ class AIService {
             
             请清晰专业地编写内容。
             """
+        case .audioPodcast:
+            systemMessage = "你是一位专业的播客制作人，擅长创作引人入胜的对话脚本。"
+            prompt = """
+            根据原始内容和以下章节大纲，为时长约\(duration)分钟、\(peopleCount)人参与的音频播客创作逐字稿。\(multiSourceNote)
+            
+            重要要求：
+            1. 必须是逐字稿格式，明确标注说话人（如：主持人、嘉宾A、嘉宾B等）。
+            2. 参与人数为\(peopleCount)人，请分配合适的角色和对话比例。
+            3. 语言风格要自然、口语化，像真实的对话一样，包含语气词和自然的互动。
+            4. 内容要有深度，同时保持轻松有趣的氛围。
+            5. 总时长控制在\(duration)分钟左右。
+            6. 如果有多个来源，请通过对话的形式自然地引入和讨论不同来源的观点。
+            
+            原始内容：
+            \(content.prefix(maxContentLength))
+            
+            章节：
+            \(chaptersString)
+            
+            请创作精彩的播客逐字稿。
+            """
         }
         
         let messages = [
@@ -275,6 +306,103 @@ class AIService {
         let messages = [
             ChatMessage(role: "system", content: "你是一个乐于助人的助手。根据提供的上下文回答用户的问题。\n\n上下文：\n\(context.prefix(10000))"),
             ChatMessage(role: "user", content: query)
+        ]
+        
+        return try await performRequest(messages: messages)
+    }
+    
+    func regenerateContent(previousContent: String, chapters: [Chapter], type: ContentType, modificationRequirement: String, duration: Int, wordCount: Int, peopleCount: Int = 2) async throws -> String {
+        let chaptersJson = try? JSONEncoder().encode(chapters)
+        let chaptersString = String(data: chaptersJson ?? Data(), encoding: .utf8) ?? ""
+        
+        var prompt = ""
+        var systemMessage = ""
+        
+        switch type {
+        case .videoScript:
+            systemMessage = "你是一位专业的视频脚本撰写者。"
+            prompt = """
+            根据用户的修改要求，对以下视频脚本内容进行重新生成。
+            
+            修改要求：\(modificationRequirement)
+            
+            原脚本（时长约\(duration)分钟）：
+            \(previousContent.prefix(maxContentLength))
+            
+            章节结构：
+            \(chaptersString)
+            
+            重要要求：
+            1. 保持视频时长为\(duration)分钟
+            2. 必须严格按照用户的修改要求进行调整
+            3. 保持内容的连贯性和专业性
+            4. 适合口语化表达，便于视频演讲
+            
+            请根据修改要求重新生成视频脚本。
+            """
+        case .xiaohongshu:
+            systemMessage = "你是一位专业的小红书内容创作者。"
+            prompt = """
+            根据用户的修改要求，对以下小红书内容进行重新生成。
+            
+            修改要求：\(modificationRequirement)
+            
+            原内容（约\(wordCount)字）：
+            \(previousContent.prefix(maxContentLength))
+            
+            章节结构：
+            \(chaptersString)
+            
+            重要要求：
+            1. 总字数控制在\(wordCount)字左右（可以有10%的浮动）
+            2. 必须严格按照用户的修改要求进行调整
+            3. 保持小红书的风格：简洁、有吸引力
+            4. 适当使用emoji表情
+            
+            请根据修改要求重新生成小红书内容。
+            """
+        case .socialPost:
+            systemMessage = "你是一位专业的社交媒体内容创作者。"
+            prompt = """
+            根据用户的修改要求，对以下社交媒体帖子内容进行重新生成。
+            
+            修改要求：\(modificationRequirement)
+            
+            原内容：
+            \(previousContent.prefix(maxContentLength))
+            
+            章节结构：
+            \(chaptersString)
+            
+            请根据修改要求重新生成社交媒体帖子内容。
+            """
+        case .audioPodcast:
+            systemMessage = "你是一位专业的播客制作人。"
+            prompt = """
+            根据用户的修改要求，对以下播客逐字稿进行重新生成。
+            
+            修改要求：\(modificationRequirement)
+            
+            原逐字稿（时长约\(duration)分钟，\(peopleCount)人参与）：
+            \(previousContent.prefix(maxContentLength))
+            
+            章节结构：
+            \(chaptersString)
+            
+            重要要求：
+            1. 保持逐字稿格式，明确标注说话人
+            2. 参与人数为\(peopleCount)人
+            3. 总时长控制在\(duration)分钟左右
+            4. 必须严格按照用户的修改要求进行调整
+            5. 保持自然、口语化的对话风格
+            
+            请根据修改要求重新生成播客逐字稿。
+            """
+        }
+        
+        let messages = [
+            ChatMessage(role: "system", content: systemMessage),
+            ChatMessage(role: "user", content: prompt)
         ]
         
         return try await performRequest(messages: messages)

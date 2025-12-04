@@ -12,6 +12,7 @@ enum ContentType: String, Codable, CaseIterable, Identifiable {
     case xiaohongshu = "小红书内容"
     case videoScript = "视频脚本"
     case socialPost = "社交媒体帖子"
+    case audioPodcast = "音频播客"
     
     var id: String { self.rawValue }
 }
@@ -64,14 +65,22 @@ final class ContentItem {
     var contentTypeRaw: String
     var chaptersData: Data? // Storing [Chapter] as JSON Data
     var contentBody: String
+    var originalContentBody: String? // For storing previous content when regenerating
+    var duration: Int // For video script and audio podcast
+    var wordCount: Int // For xiaohongshu content
+    var peopleCount: Int // For audio podcast
     var createdAt: Date
     var updatedAt: Date
     
-    init(id: UUID = UUID(), urls: [String] = [], contentType: ContentType = .xiaohongshu, chapters: [Chapter] = [], contentBody: String = "") {
+    init(id: UUID = UUID(), urls: [String] = [], contentType: ContentType = .xiaohongshu, chapters: [Chapter] = [], contentBody: String = "", duration: Int = 12, wordCount: Int = 500, peopleCount: Int = 2) {
         self.id = id
         self.urls = urls
         self.contentTypeRaw = contentType.rawValue
         self.contentBody = contentBody
+        self.originalContentBody = nil
+        self.duration = duration
+        self.wordCount = wordCount
+        self.peopleCount = peopleCount
         self.createdAt = Date()
         self.updatedAt = Date()
         self.chapters = chapters
