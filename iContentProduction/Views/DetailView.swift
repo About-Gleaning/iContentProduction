@@ -29,6 +29,30 @@ struct DetailView: View {
                     .buttonStyle(.bordered)
                 }
                 
+                // Source Links Section
+                if !item.urls.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("来源链接")
+                            .font(.title2)
+                            .bold()
+                        
+                        ForEach(item.urls, id: \.self) { urlString in
+                            if let url = URL(string: urlString) {
+                                Link(urlString, destination: url)
+                                    .font(.body)
+                                    .foregroundColor(.blue)
+                                    .lineLimit(1)
+                                    .truncationMode(.tail)
+                            } else {
+                                Text(urlString)
+                                    .font(.body)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                    }
+                    .padding(.vertical, 10)
+                }
+                
                 // Chapter Summary Section
                 VStack(alignment: .leading) {
                     Text("章节概要")

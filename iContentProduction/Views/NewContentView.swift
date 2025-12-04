@@ -474,34 +474,72 @@ struct Step3ChaptersView: View {
                 .bold()
                 .padding(.bottom)
             
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 20) {
-                    ForEach($chapters) { $chapter in
-                        VStack(alignment: .leading, spacing: 10) {
-                            TextField("标题", text: $chapter.title)
-                                .font(.headline)
-                                .padding(4)
-                                .background(Color.gray.opacity(0.1))
-                                .cornerRadius(4)
-                            
-                            TextEditor(text: $chapter.summary)
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                                .frame(height: 100)
-                                .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.gray.opacity(0.2), lineWidth: 1))
+            Text("您可以拖拽调整章节顺序，或删除不需要的章节。修改后的章节结构将用于生成最终内容。")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .padding(.bottom, 8)
+            
+            List {
+                ForEach($chapters) { $chapter in
+                    ChapterRow(chapter: $chapter, onDelete: {
+                        if let index = chapters.firstIndex(where: { $0.id == chapter.id }) {
+                            withAnimation {
+                                chapters.remove(at: index)
+                            }
                         }
-                        .padding()
-                        .frame(width: 250, height: 300)
-                        .background(Color.white)
-                        .cornerRadius(12)
-                        .shadow(color: .black.opacity(0.1), radius: 4, x: 0, y: 2)
-                    }
+                    })
                 }
-                .padding()
+                .onMove { indices, newOffset in
+                    chapters.move(fromOffsets: indices, toOffset: newOffset)
+                }
+            }
+            .listStyle(.inset)
+            
+            if chapters.isEmpty {
+                Text("没有章节，请返回上一步重新生成")
+                    .foregroundColor(.red)
+                    .padding()
             }
             
             Spacer()
         }
+    }
+}
+
+struct ChapterRow: View {
+    @Binding var chapter: Chapter
+    var onDelete: () -> Void
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Image(systemName: "line.3.horizontal")
+                    .foregroundColor(.gray)
+                    .font(.title3)
+                
+                TextField("标题", text: $chapter.title)
+                    .font(.headline)
+                    .textFieldStyle(.plain)
+                    .padding(4)
+                    .background(Color.gray.opacity(0.1))
+                    .cornerRadius(4)
+                
+                Spacer()
+                
+                Button(action: onDelete) {
+                    Image(systemName: "trash")
+                        .foregroundColor(.red)
+                }
+                .buttonStyle(.plain)
+            }
+            
+            TextEditor(text: $chapter.summary)
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .frame(height: 60)
+                .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.gray.opacity(0.2), lineWidth: 1))
+        }
+        .padding(.vertical, 8)
     }
 }
 
