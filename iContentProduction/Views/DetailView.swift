@@ -72,8 +72,7 @@ struct DetailView: View {
                                         .font(.headline)
                                         .lineLimit(2)
                                     
-                                    Text(chapter.summary)
-                                        .font(.caption)
+                                    MarkdownText(content: chapter.summary, fontSize: 11)
                                         .foregroundColor(.secondary)
                                         .lineLimit(8)
                                     
@@ -99,11 +98,8 @@ struct DetailView: View {
                         .bold()
                         .padding(.bottom, 5)
                     
-                    Text(item.contentBody)
-                        .font(.body)
-                        .padding()
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color.white)
+                    MarkdownScrollView(content: item.contentBody, backgroundColor: .white)
+                        .frame(maxWidth: .infinity, minHeight: 200)
                         .cornerRadius(12)
                         .shadow(color: .black.opacity(0.05), radius: 2, x: 0, y: 1)
                 }
@@ -194,8 +190,7 @@ struct EditContentView: View {
                 }
                 
                 Section(header: Text("内容正文")) {
-                    TextEditor(text: $item.contentBody)
-                        .frame(minHeight: 200)
+                    MarkdownEditor(text: $item.contentBody, minHeight: 200)
                 }
             }
             .navigationTitle("编辑内容")
@@ -325,59 +320,58 @@ struct AIRegenerateView: View {
                         .padding(.horizontal)
                         
                         // Content Display
-                        ScrollView {
-                            if showComparison {
-                                // Comparison View
-                                HStack(alignment: .top, spacing: 16) {
-                                    // Original Content
-                                    VStack(alignment: .leading, spacing: 8) {
-                                        Text("原内容")
-                                            .font(.headline)
-                                            .foregroundColor(.secondary)
-                                        
-                                        Text(item.contentBody)
-                                            .font(.body)
-                                            .padding()
-                                            .frame(maxWidth: .infinity, alignment: .leading)
-                                            .background(Color.gray.opacity(0.1))
-                                            .cornerRadius(8)
-                                    }
+                        if showComparison {
+                            // Comparison View
+                            HStack(alignment: .top, spacing: 16) {
+                                // Original Content
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text("原内容")
+                                        .font(.headline)
+                                        .foregroundColor(.secondary)
                                     
-                                    Divider()
-                                    
-                                    // New Content
-                                    VStack(alignment: .leading, spacing: 8) {
-                                        Text("新内容")
-                                            .font(.headline)
-                                            .foregroundColor(.green)
-                                        
-                                        Text(generatedContent ?? "")
-                                            .font(.body)
-                                            .padding()
-                                            .frame(maxWidth: .infinity, alignment: .leading)
-                                            .background(Color.green.opacity(0.1))
-                                            .cornerRadius(8)
-                                    }
+                                    MarkdownScrollView(
+                                        content: item.contentBody,
+                                        backgroundColor: Color.gray.opacity(0.1)
+                                    )
+                                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                    .cornerRadius(8)
                                 }
-                                .padding()
-                            } else {
-                                // Single View - New Content Only
+                                
+                                Divider()
+                                
+                                // New Content
                                 VStack(alignment: .leading, spacing: 8) {
                                     Text("新内容")
                                         .font(.headline)
                                         .foregroundColor(.green)
                                     
-                                    Text(generatedContent ?? "")
-                                        .font(.body)
-                                        .padding()
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        .background(Color.white)
-                                        .cornerRadius(8)
+                                    MarkdownScrollView(
+                                        content: generatedContent ?? "",
+                                        backgroundColor: Color.green.opacity(0.1)
+                                    )
+                                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                    .cornerRadius(8)
                                 }
-                                .padding()
                             }
+                            .padding()
+                        } else {
+                            // Single View - New Content Only
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("新内容")
+                                    .font(.headline)
+                                    .foregroundColor(.green)
+                                
+                                ScrollView {
+                                    MarkdownScrollView(
+                                        content: generatedContent ?? "",
+                                        backgroundColor: .white
+                                    )
+                                    .frame(maxWidth: .infinity, minHeight: 400)
+                                    .cornerRadius(8)
+                                }
+                            }
+                            .padding()
                         }
-                        .frame(maxHeight: .infinity)
                         
                         // Action Buttons
                         HStack(spacing: 12) {

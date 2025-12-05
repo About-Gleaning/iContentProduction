@@ -56,6 +56,7 @@ struct NewContentView: View {
     @State private var duration: Int = 12
     @State private var length: Int = 500
     @State private var podcastPeopleCount: Int = 2
+    @State private var chapterCount: Int? = nil // 可选的章节数量
     @State private var isProcessing = false
     @State private var errorMessage: String?
     
@@ -72,7 +73,7 @@ struct NewContentView: View {
                 if currentStep == 1 {
                     Step1InputView(linkItems: $linkItems, onFetchLink: fetchLinkContent)
                 } else if currentStep == 2 {
-                    Step2ConfigView(selectedType: $selectedType, duration: $duration, length: $length, podcastPeopleCount: $podcastPeopleCount)
+                    Step2ConfigView(selectedType: $selectedType, duration: $duration, length: $length, podcastPeopleCount: $podcastPeopleCount, chapterCount: $chapterCount)
                 } else if currentStep == 3 {
                     Step3ChaptersView(chapters: $chapters)
                 } else if currentStep == 4 {
@@ -242,7 +243,8 @@ struct NewContentView: View {
                     type: selectedType,
                     duration: duration,
                     wordCount: length,
-                    peopleCount: podcastPeopleCount
+                    peopleCount: podcastPeopleCount,
+                    chapterCount: chapterCount
                 )
                 
                 await MainActor.run {
@@ -437,13 +439,16 @@ struct Step2ConfigView: View {
     @Binding var duration: Int
     @Binding var length: Int
     @Binding var podcastPeopleCount: Int
+    @Binding var chapterCount: Int?
+    
+    @State private var chapterCountText: String = ""
     
     var body: some View {
         VStack(alignment: .leading, spacing: 30) {
             HStack {
                 Text("类型：")
                     .font(.headline)
-                    .frame(width: 80, alignment: .leading)
+                    .frame(width: 120, alignment: .leading)
                 
                 Picker("类型", selection: $selectedType) {
                     Text("视频脚本").tag(ContentType.videoScript)
@@ -451,6 +456,27 @@ struct Step2ConfigView: View {
                     Text("音频播客").tag(ContentType.audioPodcast)
                 }
                 .pickerStyle(RadioGroupPickerStyle())
+            }
+            
+            // 生成章节数量（通用选项）
+            HStack {
+                Text("生成章节数量：")
+                    .font(.headline)
+                    .frame(width: 120, alignment: .leading)
+                
+                TextField("默认为空，AI自动决定", text: $chapterCountText)
+                    .textFieldStyle(RoundedBorderTextFieldStyle())
+                    .frame(width: 150)
+                    .onChange(of: chapterCountText) { _, newValue in
+                        if newValue.isEmpty {
+                            chapterCount = nil
+                        } else if let count = Int(newValue), count > 0 {
+                            chapterCount = count
+                        }
+                    }
+                
+                Text("章（可选）")
+                    .foregroundColor(.secondary)
             }
             
             // 视频脚本显示时长
@@ -603,12 +629,7 @@ struct Step4ContentView: View {
                 .font(.title2)
                 .bold()
             
-            TextEditor(text: $contentBody)
-                .font(.body)
-                .padding()
-                .background(Color.white)
-                .cornerRadius(8)
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.gray.opacity(0.3), lineWidth: 1))
+            MarkdownEditor(text: $contentBody, minHeight: 300)
             
             HStack {
                 Spacer()

@@ -98,52 +98,55 @@ class AIService {
     
     // MARK: - Public Methods
     
-    func generateChapters(from content: String, type: ContentType, duration: Int, wordCount: Int, peopleCount: Int = 2) async throws -> [Chapter] {
+    func generateChapters(from content: String, type: ContentType, duration: Int, wordCount: Int, peopleCount: Int = 2, chapterCount: Int? = nil) async throws -> [Chapter] {
         var prompt = ""
         
         // 检测是否为多来源内容
-        let isMultiSource = content.contains("【注意：以下内容来自")
-        let sourceInstruction = isMultiSource ? "\n\n重要提示：以下内容来自多个不同来源，请综合分析所有来源的信息，提取共同点和互补点，创建一个统一连贯的章节结构。" : ""
+        let isMultiSource = content.contains("【注意:以下内容来自")
+        let sourceInstruction = isMultiSource ? "\n\n重要提示:以下内容来自多个不同来源,请综合分析所有来源的信息,提取共同点和互补点,创建一个统一连贯的章节结构。" : ""
+        
+        // 章节数量要求
+        let chapterCountInstruction = chapterCount != nil ? "\n必须生成恰好\(chapterCount!)个章节。" : ""
         
         switch type {
         case .videoScript:
             prompt = """
-            根据以下内容，为时长约\(duration)分钟的视频脚本生成章节列表。
-            请根据\(duration)分钟的时长合理规划章节数量和每个章节的内容量。\(sourceInstruction)
-            以严格的JSON数组格式返回结果，每个对象包含 'title'、'summary' 和 'keyPoints'（字符串数组）字段。
+            根据以下内容,为时长约\(duration)分钟的视频脚本生成章节列表。
+            请根据\(duration)分钟的时长合理规划章节数量和每个章节的内容量。\(sourceInstruction)\(chapterCountInstruction)
+            以严格的JSON数组格式返回结果,每个对象包含 'title'、'summary' 和 'keyPoints'(字符串数组)字段。
             不要包含任何markdown格式或额外文本。
             
-            内容：
+            内容:
             \(content.prefix(maxContentLength))
             """
         case .xiaohongshu:
             prompt = """
-            根据以下内容，为约\(wordCount)字的小红书内容生成章节列表。
+            根据以下内容,为约\(wordCount)字的小红书内容生成章节列表。
             请根据\(wordCount)字的篇幅合理规划章节数量和每个章节的内容量。
-            小红书内容应该简洁、有吸引力，适合社交媒体阅读。\(sourceInstruction)
-            以严格的JSON数组格式返回结果，每个对象包含 'title'、'summary' 和 'keyPoints'（字符串数组）字段。
+            小红书内容应该简洁、有吸引力,适合社交媒体阅读。\(sourceInstruction)\(chapterCountInstruction)
+            以严格的JSON数组格式返回结果,每个对象包含 'title'、'summary' 和 'keyPoints'(字符串数组)字段。
             不要包含任何markdown格式或额外文本。
             
-            内容：
+            内容:
             \(content.prefix(maxContentLength))
             """
         case .socialPost:
             prompt = """
-            根据以下内容，为社交媒体帖子生成章节列表。\(sourceInstruction)
-            以严格的JSON数组格式返回结果，每个对象包含 'title'、'summary' 和 'keyPoints'（字符串数组）字段。
+            根据以下内容,为社交媒体帖子生成章节列表。\(sourceInstruction)\(chapterCountInstruction)
+            以严格的JSON数组格式返回结果,每个对象包含 'title'、'summary' 和 'keyPoints'(字符串数组)字段。
             不要包含任何markdown格式或额外文本。
             
-            内容：
+            内容:
             \(content.prefix(maxContentLength))
             """
         case .audioPodcast:
             prompt = """
-            根据以下内容，为时长约\(duration)分钟、\(peopleCount)人参与的音频播客生成章节大纲。
-            请根据\(duration)分钟的时长合理规划话题和讨论流程。\(sourceInstruction)
-            以严格的JSON数组格式返回结果，每个对象包含 'title'、'summary' 和 'keyPoints'（字符串数组）字段。
+            根据以下内容,为时长约\(duration)分钟、\(peopleCount)人参与的音频播客生成章节大纲。
+            请根据\(duration)分钟的时长合理规划话题和讨论流程。\(sourceInstruction)\(chapterCountInstruction)
+            以严格的JSON数组格式返回结果,每个对象包含 'title'、'summary' 和 'keyPoints'(字符串数组)字段。
             不要包含任何markdown格式或额外文本。
             
-            内容：
+            内容:
             \(content.prefix(maxContentLength))
             """
         }

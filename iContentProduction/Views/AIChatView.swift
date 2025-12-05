@@ -27,12 +27,12 @@ struct AIChatView: View {
                         HStack {
                             if message.role == "user" {
                                 Spacer()
-                                Text(message.content)
+                                MarkdownText(content: message.content)
                                     .padding()
                                     .background(Color.blue.opacity(0.1))
                                     .cornerRadius(12)
                             } else {
-                                Text(message.content)
+                                MarkdownText(content: message.content)
                                     .padding()
                                     .background(Color.gray.opacity(0.1))
                                     .cornerRadius(12)
